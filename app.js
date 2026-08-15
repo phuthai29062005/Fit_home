@@ -103,6 +103,12 @@ function dims(it){
   return (it.rot % 180 === 0) ? {w:p.w, d:p.d} : {w:p.d, d:p.w};
 }
 const noFloor = p => p.cat === 'tham' || !!p.mount;
+/* bản dùng cho 1 MÓN ĐÃ ĐẶT (instance, có x/y/uid...) chứ không phải sản
+   phẩm trong danh mục — cộng thêm trường hợp mount RIÊNG của món đó, do
+   placeOnFurniture() gán khi đặt cây/tượng lên mặt tủ/bàn có sẵn (những
+   món này KHÔNG treo tường theo catalog, nhưng cũng không tính là "ở sàn"
+   nữa vì đang nằm trên mặt 1 món khác). */
+const noFloorItem = it => noFloor(byId(it.id)) || it.mount != null;
 function rectOf(it){ const {w,d} = dims(it); return {x:it.x, y:it.y, w, d}; }
 const overlap = (a,b) => a.x < b.x+b.w && b.x < a.x+a.w && a.y < b.y+b.d && b.y < a.y+a.d;
 function gapBetween(a,b){
@@ -275,7 +281,7 @@ function badSet(){
     (r.fixtures||[]).forEach(f => { if (overlap(A,{x:f.x,y:f.y,w:f.w,d:f.d})) s.add(a.uid); });
   });
   for (let i=0;i<list.length;i++) for (let j=i+1;j<list.length;j++){
-    if (noFloor(byId(list[i].id)) || noFloor(byId(list[j].id))) continue;
+    if (noFloorItem(list[i]) || noFloorItem(list[j])) continue;
     if (overlap(rectOf(list[i]), rectOf(list[j]))) { s.add(list[i].uid); s.add(list[j].uid); }
   }
   return s;
@@ -558,10 +564,11 @@ function runChecks(rid){
     ? {lv:'err', t:outside.length + ' món nằm ngoài phòng', s:'Kéo lại vào trong khung tường.'}
     : {lv:'ok',  t:'Mọi món đều nằm gọn trong phòng', s:'Kích thước phòng ' + (r.w/100).toFixed(2) + ' × ' + (r.d/100).toFixed(2) + ' m.'});
 
-  // 2. chồng lấn
+  // 2. chồng lấn — bỏ qua cặp KHÔNG CÙNG "TẦNG" (thảm dưới sàn, hoặc 1 món
+  // treo tường/trần + 1 món khác dưới sàn, vd tivi treo phía trên bàn thờ)
   let clash = 0;
   for (let i=0;i<items.length;i++) for (let j=i+1;j<items.length;j++){
-    if (byId(items[i].id).cat==='tham' || byId(items[j].id).cat==='tham') continue;
+    if (noFloorItem(items[i]) || noFloorItem(items[j])) continue;
     if (overlap(rectOf(items[i]), rectOf(items[j]))) clash++;
   }
   out.push(clash
@@ -574,7 +581,7 @@ function runChecks(rid){
     const a = items[i], b = items[j];
     const ca = byId(a.id).cat, cbb = byId(b.id).cat;
     if (byId(a.id).mount || byId(b.id).mount) continue;
-    if (['den','bantra'].includes(ca) || ['den','bantra'].includes(cbb) || noFloor(byId(a.id)) || noFloor(byId(b.id))) continue;
+    if (['den','bantra'].includes(ca) || ['den','bantra'].includes(cbb) || noFloorItem(a) || noFloorItem(b)) continue;
     if (CLOSE_OK.some(pr => (pr[0]===ca && pr[1]===cbb) || (pr[0]===cbb && pr[1]===ca))) continue;
     const g = gapBetween(rectOf(a), rectOf(b));
     if (g > 0 && g < 60){ narrow = {a,b,g}; break; }
@@ -595,7 +602,7 @@ function runChecks(rid){
     // (passRect) như "open", không dùng swingRect (chỉ đúng cho cửa bản lề).
     const sw = (o.type === 'open' || o.type === 'glass') ? passRect(o, r, 48) : swingRect(o, r);
     items.forEach(a => {
-      if (noFloor(byId(a.id))) return;
+      if (noFloorItem(a)) return;
       if (overlap(rectOf(a), sw)) blocked.push(byId(a.id).name + ' chắn ' + o.label.toLowerCase());
     });
     (r.fixtures||[]).forEach(f => {
@@ -609,7 +616,7 @@ function runChecks(rid){
   // 5. lọt cửa khi vận chuyển
   const swingDoors = (r.openings||[]).filter(o => o.type === 'door');
   const minDoor = plan().entry ? plan().entry.len : (swingDoors.length ? Math.min(...swingDoors.map(o => o.len)) : 90);
-  const tooBig = items.filter(a => { const p = byId(a.id); return Math.min(p.w, p.d) > minDoor - 5 && !p.knock && !noFloor(p); });
+  const tooBig = items.filter(a => { const p = byId(a.id); return Math.min(p.w, p.d) > minDoor - 5 && !p.knock && !noFloorItem(a); });
   out.push(tooBig.length
     ? {lv:'warn', t:'Khó khiêng qua cửa chính ' + minDoor + ' cm', s:tooBig.map(a => byId(a.id).name).join('; ') + ' là hàng nguyên khối, không tháo rời được. Cần đo lại lồng thang máy trước khi đặt.'}
     : {lv:'ok',  t:'Mọi món khiêng lọt cửa chính ' + minDoor + ' cm', s:''});
@@ -870,12 +877,19 @@ function blockedZones(avoidWindow){
   });
   return z;
 }
-function isFree(R, gap, avoidWindow){
+/* p = sản phẩm đang thử đặt vào R (không bắt buộc truyền, nhưng nếu bỏ qua
+   thì món treo tường/trần khi tự động xếp sẽ vẫn bị chặn bởi đồ dưới sàn ở
+   đúng ô đó — xem noFloor() ở trên: 2 món không cùng "tầng" (1 treo cao, 1
+   ngồi sàn, vd tivi treo phía trên bàn thờ) thì không tính là chồng nhau,
+   giống hệt cách "lối đi" và "gợi ý xếp cạnh nhau" đã bỏ qua các cặp này). */
+function isFree(R, gap, avoidWindow, p){
   const r = room();
   if (R.x < 0 || R.y < 0 || R.x + R.w > r.w || R.y + R.d > r.d) return false;
   for (const z of blockedZones(avoidWindow)) if (overlap(R, z)) return false;
+  const placingNoFloor = p ? noFloor(p) : false;
   for (const it of items()){
     if (byId(it.id).cat === 'tham') continue;
+    if (placingNoFloor || noFloorItem(it)) continue;
     const O = rectOf(it);
     if (overlap(R, {x:O.x-gap, y:O.y-gap, w:O.w+2*gap, d:O.d+2*gap})) return false;
   }
@@ -925,7 +939,7 @@ function placeOnWall(p, walls, opt){
       if (opt.awayFrom && (r.fixtures||[]).some(f =>
             opt.awayFrom.includes(f.name) &&
             gapBetween(R, {x:f.x, y:f.y, w:f.w, d:f.d}) < 50)) continue;
-      if (isFree(R, gap, avoidWindow)){
+      if (isFree(R, gap, avoidWindow, p)){
         const it = {uid:UID++, id:p.id, x:R.x, y:R.y, rot};
         items().push(it); return it;
       }
@@ -940,7 +954,7 @@ function placeNear(p, x, y, rot, gap){
   for (let step = 0; step <= 40; step++){
     for (const [sx,sy] of [[0,0],[1,0],[-1,0],[0,1],[0,-1],[1,1],[-1,1],[1,-1],[-1,-1]]){
       const R = {x:Math.round(x + sx*step*10), y:Math.round(y + sy*step*10), w:dm.w, d:dm.d};
-      if (isFree(R, step > 12 ? 0 : gap, p.h >= 110)){
+      if (isFree(R, step > 12 ? 0 : gap, p.h >= 110, p)){
         const it = {uid:UID++, id:p.id, x:R.x, y:R.y, rot};
         items().push(it); return it;
       }
@@ -954,11 +968,41 @@ function placeCorner(p){
     [r.w-dm.w-M, r.d-dm.d-M], [M, r.d-dm.d-M], [r.w-dm.w-M, M], [M, M]
   ];
   for (const [x,y] of spots){
-    if (isFree({x, y, w:dm.w, d:dm.d}, 8, p.h >= 110)){
+    if (isFree({x, y, w:dm.w, d:dm.d}, 8, p.h >= 110, p)){
       const it = {uid:UID++, id:p.id, x, y, rot:0}; items().push(it); return it;
     }
   }
   return placeNear(p, r.w/2, r.d/2, 0, 8);
+}
+/* đặt món NHỎ (cây/tượng phong thuỷ...) lên MẶT một món đồ đã có sẵn trong
+   phòng (tủ, kệ, bàn trang điểm, bàn thờ...) thay vì để thẳng xuống sàn —
+   ngoài đời không ai đặt tượng/chậu cây trực tiếp dưới đất. Trả về null nếu
+   phòng chưa có món nào trong hostCats, hoặc mặt món đó không đủ chỗ, để
+   nơi gọi tự lùi về cách đặt cũ (kê sát tường, dưới sàn). */
+function placeOnFurniture(p, hostCats){
+  const dm = dims({id:p.id, rot:0});
+  for (const it of items()){
+    const host = byId(it.id);
+    if (!hostCats.includes(host.cat)) continue;
+    const hr = rectOf(it);
+    if (dm.w > hr.w - 6 || dm.d > hr.d - 6) continue;
+    /* thử giữa mặt trước, rồi 4 góc — để 2 món cùng đặt lên 1 mặt (vd cây +
+       tượng cùng lên 1 tủ) không bị chồng thẳng lên nhau ở giữa. Chỉ so
+       với món khác ĐANG Ở CÙNG ĐỘ CAO (mount === host.h, tức cùng mặt này) —
+       món dưới sàn/mặt khác không liên quan, không cần né. */
+    const cx = hr.x + (hr.w-dm.w)/2, cy = hr.y + (hr.d-dm.d)/2;
+    const cands = [[cx,cy],
+      [hr.x+3, hr.y+3], [hr.x+hr.w-dm.w-3, hr.y+3],
+      [hr.x+3, hr.y+hr.d-dm.d-3], [hr.x+hr.w-dm.w-3, hr.y+hr.d-dm.d-3]];
+    for (const [x,y] of cands){
+      const R = {x:Math.round(x), y:Math.round(y), w:dm.w, d:dm.d};
+      const clash = items().some(o => o.mount === host.h && overlap(R, rectOf(o)));
+      if (clash) continue;
+      const inst = {uid:UID++, id:p.id, x:R.x, y:R.y, rot:0, mount:host.h};
+      items().push(inst); return inst;
+    }
+  }
+  return null;
 }
 /* thảm nằm dưới sàn, không xét va chạm */
 function placeRug(p, cx, cy){
@@ -1001,10 +1045,14 @@ function neededCats(r){
      đang chọn cao đến đâu. */
   const effTier = decor.toiGian ? Math.min(tier, 1) : tier;
   /* 0 Tiết kiệm: chỉ đồ cốt lõi · 1 Tiêu chuẩn: đúng bộ mặc định (như trước
-     giờ) · 2 Đầy đủ: bộ mặc định + 1 món trang trí · 3 Cao cấp: + tất cả */
+     giờ) · 2 Đầy đủ: bộ mặc định + 2 món trang trí · 3 Cao cấp: + tất cả.
+     Lấy 2 món (không phải 1) ở mức Đầy đủ vì RECIPE_EXTRA (data.js) luôn để
+     "cây" lên đầu danh sách cho hầu hết loại phòng — trước đây chỉ lấy 1
+     món đầu nên tăng ngân sách từ Tiêu chuẩn lên Đầy đủ chỉ thấy thêm cây,
+     không thấy hạng mục nào khác cho tới tận mức Cao cấp. */
   const cats = (effTier === 0 ? core
               : effTier === 1 ? base
-              : effTier === 2 ? base.concat(extra.slice(0,1))
+              : effTier === 2 ? base.concat(extra.slice(0,2))
               : base.concat(extra)).slice();
   const add = c => { if (!cats.includes(c)) cats.push(c); };
   const rm  = c => { const i = cats.indexOf(c); if (i > -1) cats.splice(i, 1); };
@@ -1127,6 +1175,15 @@ function autoLayout(budget, silent){
      ngoài công thức gốc) — kê tạm sát tường trống gần nhất, nới đệm nếu chật */
   cats.forEach(c => {
     if (placed.has(c) || !get(c)) return;
+    /* cây/tượng phong thuỷ: thử đặt lên MẶT tủ/kệ/bàn có sẵn trong phòng
+       trước — chỉ khi phòng chưa có món nào để kê lên (vd phòng trống trơn)
+       mới lùi về cách cũ là kê sát tường dưới sàn. */
+    if (c === 'cay' || c === 'tuong'){
+      placeOnFurniture(get(c), ['bantho','trangdiem','ketivi','tuquanao','kesach','tab'])
+        || onWall(c, ['S','W','E','N'], {gap:20, avoidWindow:false})
+        || onWall(c, ['S','W','E','N'], {gap:8, avoidWindow:false});
+      return;
+    }
     onWall(c, ['S','W','E','N'], {gap:20, avoidWindow:false})
       || onWall(c, ['S','W','E','N'], {gap:8, avoidWindow:false});
   });
@@ -2206,14 +2263,14 @@ function td_furniture(it, ox, oy){
     default: add(rb(W,H,D,.02, wood, 0,H/2,0));
   }
 
-  if (p.cat!=='tham' && !p.mount) g.add(contact(W,D,0,0, .8));
+  /* it.mount = độ cao lắp RIÊNG của món này (do placeOnFurniture() gán khi
+     đặt lên mặt 1 món khác, vd cây/tượng phong thuỷ đặt lên tủ/bàn có sẵn),
+     ưu tiên hơn p.mount (độ cao mặc định khai trong CATALOG, dùng cho món
+     LUÔN treo tường/trần như gương, kệ tivi treo, đèn tường, điều hoà...). */
+  const mount = it.mount != null ? it.mount : p.mount;
+  if (p.cat!=='tham' && !mount) g.add(contact(W,D,0,0, .8));
   const dm = dims(it);
-  /* p.mount = độ cao lắp so với sàn (cm), khai báo trong CATALOG cho các món
-     treo tường/trần (gương, kệ tivi treo, đèn tường/trần, điều hoà, bình nóng
-     lạnh...) — áp dụng CHUNG ở đây cho mọi hạng mục, không phải chỉ bàn thờ,
-     nếu không món sẽ luôn vẽ dính sàn (và thiếu bóng đổ vì contact() đã bị bỏ
-     qua ở trên) — trông như lơ lửng, mất điểm tựa thay vì treo đúng độ cao. */
-  const mountY = p.mount ? p.mount/100 : 0;
+  const mountY = mount ? mount/100 : 0;
   g.position.set((ox+it.x+dm.w/2)/100, mountY, (oy+it.y+dm.d/2)/100);
   g.rotation.y = -it.rot*Math.PI/180;
   g.userData.uid = it.uid;
