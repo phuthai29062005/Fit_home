@@ -129,7 +129,10 @@ header.top{
 
 /* ---------- layout ---------- */
 .main{flex:1 1 auto;display:grid;grid-template-columns:290px minmax(0,1fr) 320px;min-height:0}
-.pane{min-height:0;overflow-y:auto;background:var(--paper);color:var(--ink)}
+/* overflow-x:hidden CHỦ ĐỘNG, không chỉ dựa vào mặc định — nếu chỉ khai
+   overflow-y (như trước) thì trình duyệt tự suy ra overflow-x:auto, nội
+   dung nào lỡ rộng hơn khung (vd thẻ gợi ý dài) sẽ ép cả khung cuộn ngang. */
+.pane{min-height:0;overflow-y:auto;overflow-x:hidden;background:var(--paper);color:var(--ink)}
 .pane.left{border-right:1px solid var(--ink)}
 .pane.right{border-left:1px solid var(--ink);background:var(--paper-2)}
 .stage{position:relative;min-height:0;background:var(--ink-2);display:flex;flex-direction:column}
@@ -279,11 +282,15 @@ canvas#cv.off{visibility:hidden}
 .check.err button{border-color:var(--son-soft);color:var(--son-soft)}
 .check button:hover{background:var(--kim);color:var(--ink)}
 .check.err button:hover{background:var(--son-soft);color:var(--ink)}
-.plantrow{display:flex;flex-wrap:wrap;gap:5px;margin-top:5px}
+/* mỗi gợi ý XẾP THÀNH 1 HÀNG RIÊNG (không cố nhét nhiều thẻ/hàng như trước) —
+   tên sản phẩm tiếng Việt + giá + 2 nút thường đã dài hơn cả khung panel bên
+   phải (320px), ép trước đây phải cuộn ngang cả khung rất khó chịu. Giờ mỗi
+   thẻ rộng đúng bằng khung, chữ được XUỐNG DÒNG bên trong thay vì tràn ra. */
+.plantrow{display:flex;flex-direction:column;gap:6px;margin-top:6px}
 .plantpick{
-  display:inline-flex;align-items:center;gap:5px;
-  background:var(--paper-2);border:1px solid var(--line);border-radius:999px;
-  padding:3px 4px 3px 9px;font-size:10.5px;color:var(--ink)!important;white-space:nowrap;
+  display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;
+  background:var(--paper-2);border:1px solid var(--line);border-radius:8px;
+  padding:6px 9px;font-size:10.5px;color:var(--ink)!important;width:100%;
 }
 .plantpick button{
   font-family:var(--mono);font-size:10px;padding:2px 7px;border-radius:999px;
