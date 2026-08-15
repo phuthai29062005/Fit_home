@@ -1247,7 +1247,11 @@ function parseNeedNotes(text){
     const sent = sentRaw.toLowerCase();
     let matchedRole = null;
     for (const role in ROLE_KEYWORDS){ if (hasRole(sent, ROLE_KEYWORDS[role])){ matchedRole = role; break; } }
-    const wantPhongThuy = sent.includes('phong thuỷ') || sent.includes('phong thủy');
+    /* chấp nhận cả kiểu gõ thiếu/lệch dấu ("phong thuy", "phong thuyt"...) —
+       chỉ cần còn nhận ra cụm "phong thu" là đủ, tránh trường hợp gõ sai 1
+       dấu mà câu bị lặng lẽ bỏ qua không báo gì (rất khó nhận ra vì câu vẫn
+       khớp được vai trò nên không rơi vào mục "chưa hiểu"). */
+    const wantPhongThuy = sent.includes('phong thu');
     const wantTrangDiem = sent.includes('trang điểm');
     const wantToiGian   = sent.includes('tối giản');
     const isDecorAsk = wantPhongThuy || wantTrangDiem || wantToiGian;
