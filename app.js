@@ -18,8 +18,11 @@ const S = {
          sizePref:{}, colorPref:{}, must:[], autoMust:[], exclude:[], parsed:[],
          /* occupants: {roomId: {role, year, label}} — đọc từ ghi chú tự do, vd
             "phòng ngủ nhỏ là của con, sinh năm 2015" — dùng để tính phong thuỷ
-            (hướng giường...) RIÊNG cho từng phòng theo đúng người ở đó. */
-         occupants:{} },
+            (hướng giường...) RIÊNG cho từng phòng theo đúng người ở đó.
+            decorReq: {roomId: {phongThuy, trangDiem, toiGian}} — CŨNG đọc từ
+            ghi chú (vd "phòng ông bà cần đồ phong thuỷ"), quyết định đồ trang
+            trí có xuất hiện hay không; xem neededCats(). */
+         occupants:{}, decorReq:{} },
   arIdx:0
 };
 let UID = 1;
@@ -982,24 +985,21 @@ function budgetTierIdx(){
   return i === -1 ? BUDGET_TIERS.length - 1 : i;
 }
 const budgetTier = () => BUDGET_TIERS[budgetTierIdx()];
-/* vai trò người ở phòng — ưu tiên khai báo ĐỘNG qua ghi chú (chatbox,
-   S.need.occupants, xem parseNeedNotes) vì đó là nơi người dùng thật sự
-   điều khiển; mặt bằng chưa được nhắc tới trong ghi chú thì rơi về vai trò
-   MẶC ĐỊNH gán sẵn trong dữ liệu phòng (r.role, nếu có mặt bằng khai báo). */
-function roleOfRoom(r){
-  const occ = S.need.occupants[r.id];
-  return (occ && occ.role) || r.role || null;
-}
 function neededCats(r){
   const tier = budgetTierIdx();
   const base = (r.recipe || RECIPES[r.type] || RECIPES.khach);
   const core = RECIPE_CORE[r.type] || RECIPE_CORE.khach;
   const extra = RECIPE_EXTRA[r.type] || RECIPE_EXTRA.khach;
-  const role = roleOfRoom(r);
-  /* phòng CON CÁI phải TỐI GIẢN theo đúng vai trò — chặn trần ở mức "Tiêu
-     chuẩn" (chỉ bộ đồ cơ bản), không bao giờ lên mức "Đầy đủ/Cao cấp" dù
-     ngân sách cả căn hộ đang chọn cao đến đâu. */
-  const effTier = (role === 'con') ? Math.min(tier, 1) : tier;
+  /* yêu cầu trang trí THEO PHÒNG — chỉ có khi người dùng THẬT SỰ gõ ghi chú
+     xin ("...cần đồ phong thuỷ" / "...bàn trang điểm" / "...tối giản"), xem
+     parseNeedNotes(). KHÔNG suy ra từ vai trò (role) nữa — trước đây phòng
+     ông bà/bố mẹ/con tự động có đồ dù không ai yêu cầu, gây hiểu nhầm là
+     "app tự bịa ra" thay vì phản hồi đúng cái người dùng gõ. */
+  const decor = (S.need.decorReq && S.need.decorReq[r.id]) || {};
+  /* phòng được xin TỐI GIẢN thì chặn trần ở mức "Tiêu chuẩn" (chỉ bộ đồ cơ
+     bản), không bao giờ lên mức "Đầy đủ/Cao cấp" dù ngân sách cả căn hộ
+     đang chọn cao đến đâu. */
+  const effTier = decor.toiGian ? Math.min(tier, 1) : tier;
   /* 0 Tiết kiệm: chỉ đồ cốt lõi · 1 Tiêu chuẩn: đúng bộ mặc định (như trước
      giờ) · 2 Đầy đủ: bộ mặc định + 1 món trang trí · 3 Cao cấp: + tất cả */
   const cats = (effTier === 0 ? core
@@ -1014,14 +1014,13 @@ function neededCats(r){
   if (r.type === 'khach'){ S.need.must.forEach(add); S.need.autoMust.forEach(add); }
   S.need.exclude.forEach(rm);
 
-  /* PHONG THUỶ / CÔNG NĂNG THEO VAI TRÒ PHÒNG — áp dụng SAU CÙNG, đè lên cả
-     ngân sách lẫn ghi chú đồ đạc ở trên, đúng 3 yêu cầu: phòng ông bà phải
-     có đồ phong thuỷ, phòng con tối giản, phòng bố mẹ phải có bàn trang
-     điểm. Đặt sau exclude() để dù người dùng lỡ gõ "không cần..." cũng
-     không bỏ được cái mà vai trò phòng đã yêu cầu bắt buộc. */
-  if (role === 'ongba'){ add('cay'); add('tuong'); }
-  else if (role === 'con'){ rm('guong'); rm('tranh'); rm('tuong'); }
-  else if (role === 'bome'){ add('trangdiem'); }
+  /* PHONG THUỶ / CÔNG NĂNG THEO YÊU CẦU GHI CHÚ — áp dụng SAU CÙNG, đè lên
+     cả ngân sách lẫn ghi chú đồ đạc ở trên, để "không cần gương" gõ nhầm
+     không bao giờ lấy mất đồ phong thuỷ/trang điểm người dùng đã xin riêng
+     cho phòng đó. */
+  if (decor.phongThuy){ add('cay'); add('tuong'); }
+  if (decor.trangDiem){ add('trangdiem'); }
+  if (decor.toiGian){ rm('guong'); rm('tranh'); rm('tuong'); rm('cay'); rm('trangdiem'); }
 
   return cats;
 }
@@ -1192,19 +1191,23 @@ function yearForRoom(rid){
   const occ = S.need.occupants[rid];
   return (occ && occ.year) || S.year;
 }
-/* suy ra PHÒNG nào đang được nhắc tới trong 1 câu ghi chú đã khai báo vai
-   trò (role) — ưu tiên khớp trực tiếp theo TÊN phòng hoặc id phòng người
-   dùng gõ ra; nếu câu không nêu tên phòng cụ thể, dùng vai trò MẶC ĐỊNH đã
-   gán sẵn cho phòng đó trong dữ liệu mặt bằng (r.role, nếu mặt bằng có khai
-   báo) — nhờ vậy hoạt động được với MỌI mặt bằng, không hardcode theo plan
-   cụ thể nào (mặt bằng chưa gán role thì chỉ khớp được khi nêu rõ tên phòng). */
-function resolveOccupantRoom(cl, role){
+/* suy ra PHÒNG nào đang được nhắc tới trong 1 câu ghi chú — ưu tiên khớp
+   trực tiếp theo TÊN phòng hoặc id phòng người dùng gõ ra; nếu câu không
+   nêu tên phòng cụ thể mà chỉ gọi theo vai trò (vd "phòng bố mẹ..."), tìm
+   trong CÁC CÂU TRƯỚC ĐÓ CỦA CHÍNH GHI CHÚ NÀY xem phòng nào đã được khai
+   "là của [vai trò đó]" — nhờ vậy câu xin đồ ("phòng ông bà cần đồ phong
+   thuỷ") có thể đứng tách riêng, miễn đứng SAU câu khai người ở phòng đó. */
+function resolveOccupantRoom(cl, role, occupants){
   const rooms = plan().rooms.filter(r => r.type === 'ngu');
   let hit = rooms.find(r => cl.includes(r.name.toLowerCase()));
   if (hit) return hit;
   hit = rooms.find(r => cl.includes(r.id.toLowerCase()));
   if (hit) return hit;
-  return rooms.find(r => r.role === role) || null;
+  if (role && occupants){
+    const rid = Object.keys(occupants).find(k => occupants[k].role === role);
+    if (rid) return roomById(rid);
+  }
+  return null;
 }
 
 function parseNeedNotes(text){
@@ -1213,15 +1216,28 @@ function parseNeedNotes(text){
   n.workspace = false; n.pc = false; n.bedroomTv = false; n.oneBedOnly = false;
   n.sizePref = {}; n.colorPref = {}; n.exclude = []; n.autoMust = []; n.unmatched = [];
   n.occupants = {};
+  n.decorReq = {};
 
   const hasAny = (s, list) => list.some(k => s.includes(k));
   const findColor = s => { for (const [word, fam] of COLOR_WORDS) if (s.includes(word)) return fam; return null; };
+  /* so khớp TỪ VAI TRÒ (ông/bà/ba/má/cha/mẹ/con...) theo ĐÚNG 1 TỪ trọn vẹn,
+     không phải kiểu "chứa chuỗi con" như hasAny() ở trên — vì các từ này chỉ
+     1 âm tiết nên rất dễ trùng bên trong 1 từ khác hoàn toàn nghĩa: "bà" nằm
+     sẵn trong "bàn" (bàn trang điểm), "ông" nằm sẵn trong "tông" (tông màu).
+     Cụm 2+ từ (vd "ông bà", "bố mẹ") an toàn hơn nhiều nên vẫn so kiểu chứa
+     chuỗi con như cũ. */
+  const wordsOf = s => s.split(/[^\p{L}0-9]+/u).filter(Boolean);
+  const hasRole = (s, list) => {
+    const words = wordsOf(s);
+    return list.some(k => k.includes(' ') ? s.includes(k) : words.includes(k));
+  };
 
   /* khai báo NGƯỜI Ở 1 PHÒNG CỤ THỂ (vd "phòng ngủ nhỏ là của con, sinh năm
-     2015") — xử lý Ở CẤP CÂU (chỉ tách theo dấu chấm/chấm phẩy/xuống dòng,
-     GIỮ NGUYÊN dấu phẩy trong câu) vì cách nói tự nhiên nhất là "...là của
-     X, sinh năm Y" — nếu tách theo dấu phẩy như bước khớp đồ đạc bên dưới
-     thì "sinh năm Y" bị rơi ra thành 1 mảnh riêng, mất liên kết với "X".
+     2015") VÀ câu XIN ĐỒ TRANG TRÍ THEO PHÒNG (vd "phòng ông bà cần đồ
+     phong thuỷ") — xử lý Ở CẤP CÂU (chỉ tách theo dấu chấm/chấm phẩy/xuống
+     dòng, GIỮ NGUYÊN dấu phẩy trong câu) vì cách nói tự nhiên nhất là "...là
+     của X, sinh năm Y" — nếu tách theo dấu phẩy như bước khớp đồ đạc bên
+     dưới thì "sinh năm Y" bị rơi ra thành 1 mảnh riêng, mất liên kết với "X".
      Câu nào khớp được (hoặc nhận ra nhưng thiếu tên phòng) thì loại hẳn khỏi
      text trước khi đưa xuống bước tách theo dấu phẩy, để không bị xử lý (và
      báo "chưa hiểu") lần thứ 2 ở dưới. */
@@ -1230,20 +1246,32 @@ function parseNeedNotes(text){
   sentencesRaw.forEach(sentRaw => {
     const sent = sentRaw.toLowerCase();
     let matchedRole = null;
-    for (const role in ROLE_KEYWORDS){ if (hasAny(sent, ROLE_KEYWORDS[role])){ matchedRole = role; break; } }
-    if (!matchedRole){ leftoverSentences.push(sentRaw); return; }
-    const targetRoom = resolveOccupantRoom(sent, matchedRole);
+    for (const role in ROLE_KEYWORDS){ if (hasRole(sent, ROLE_KEYWORDS[role])){ matchedRole = role; break; } }
+    const wantPhongThuy = sent.includes('phong thuỷ') || sent.includes('phong thủy');
+    const wantTrangDiem = sent.includes('trang điểm');
+    const wantToiGian   = sent.includes('tối giản');
+    const isDecorAsk = wantPhongThuy || wantTrangDiem || wantToiGian;
+    if (!matchedRole && !isDecorAsk){ leftoverSentences.push(sentRaw); return; }
+    const targetRoom = resolveOccupantRoom(sent, matchedRole, n.occupants);
     if (!targetRoom){
-      n.unmatched.push(sentRaw + ' (chưa rõ đang nói phòng nào — nêu rõ tên phòng, vd "phòng ngủ nhỏ")');
+      n.unmatched.push(sentRaw + ' (chưa rõ đang nói phòng nào — nêu rõ tên phòng, vd "phòng ngủ nhỏ", hoặc khai người ở phòng đó trước)');
       return;
     }
-    const yearMatch = sent.match(/(19|20)\d{2}/);
-    const prevYear = n.occupants[targetRoom.id] && n.occupants[targetRoom.id].year;
-    n.occupants[targetRoom.id] = {
-      role: matchedRole,
-      year: yearMatch ? +yearMatch[0] : (prevYear || null),
-      label: ROLE_LABEL[matchedRole]
-    };
+    if (matchedRole){
+      const yearMatch = sent.match(/(19|20)\d{2}/);
+      const prevYear = n.occupants[targetRoom.id] && n.occupants[targetRoom.id].year;
+      n.occupants[targetRoom.id] = {
+        role: matchedRole,
+        year: yearMatch ? +yearMatch[0] : (prevYear || null),
+        label: ROLE_LABEL[matchedRole]
+      };
+    }
+    if (isDecorAsk){
+      const d = n.decorReq[targetRoom.id] || (n.decorReq[targetRoom.id] = {});
+      if (wantPhongThuy) d.phongThuy = true;
+      if (wantTrangDiem) d.trangDiem = true;
+      if (wantToiGian)   d.toiGian = true;
+    }
   });
 
   /* giữ nguyên chữ hoa/thường của câu gốc (clausesRaw) để hiện lại đúng như
@@ -1321,6 +1349,15 @@ function parseNeedNotes(text){
     parsed.push(occ.label + ' ở ' + rr.name.toLowerCase()
       + (occ.year ? ' (sinh năm ' + occ.year + ')' : ' — chưa rõ năm sinh, tạm tính phong thuỷ theo năm sinh chung ở mục 1')
       + '. Hướng giường ở phòng này sẽ tính riêng theo người này.');
+  });
+  Object.keys(n.decorReq).forEach(rid => {
+    const d = n.decorReq[rid], rr = roomById(rid);
+    if (!rr) return;
+    const bits = [];
+    if (d.phongThuy) bits.push('thêm cây + tượng phong thuỷ');
+    if (d.trangDiem) bits.push('thêm bàn trang điểm');
+    if (d.toiGian)   bits.push('tối giản — bỏ hết đồ trang trí, không tăng theo ngân sách');
+    if (bits.length) parsed.push(rr.name + ': ' + bits.join(', ') + '.');
   });
   if (n.oneBedOnly) parsed.push('Chỉ dùng 1 giường — phòng ngủ +1 sẽ không xếp giường nữa.');
   if (n.pc) parsed.push('Thêm bộ PC / máy tính bàn (kèm góc làm việc) vào ' + deskWr + '.');
@@ -2706,7 +2743,7 @@ function renderPremiumBox(){
   } else {
     box.innerHTML = `<div class="premiumHead"><b>FIT·HOME</b><span class="premiumTag">Premium</span></div>
       <p class="premiumDesc">Mở khoá ánh sáng 3D nâng cao, lưu không giới hạn mẫu bố trí, xuất ảnh độ phân giải cao.</p>
-      <button class="btn primary sm" id="btnPremium">Nâng cấp Premium — 49.000 đ/tháng</button>`;
+      <button class="btn primary sm" id="btnPremium">Nâng cấp Premium — 199.000 đ/tháng</button>`;
     $('#btnPremium').onclick = () => $('#premiumModal').classList.add('on');
   }
 }

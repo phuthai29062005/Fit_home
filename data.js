@@ -102,7 +102,7 @@ const PLANS = [
         {wall:'N', pos:0, len:130, type:'railing', label:'Lan can'}
       ], fixtures:[]},
 
-    { id:'master', name:'Phòng ngủ master', type:'ngu', role:'bome', x:0, y:200, w:270, d:700,
+    { id:'master', name:'Phòng ngủ master', type:'ngu', x:0, y:200, w:270, d:700,
       floor:'go', recipe:['giuong','tuquanao','tab','den'],
       openings:[
         {wall:'W', pos:300, len:200, type:'window', label:'Cửa sổ'},
@@ -131,7 +131,7 @@ const PLANS = [
         {wall:'S', pos:0, len:420, type:'railing', label:'Lan can'}
       ], fixtures:[]},
 
-    { id:'ngu3', name:'Phòng ngủ nhỏ', type:'ngu', role:'con', x:690, y:0, w:240, d:380,
+    { id:'ngu3', name:'Phòng ngủ nhỏ', type:'ngu', x:690, y:0, w:240, d:380,
       floor:'go', recipe:['giuong','tuquanao','tab'],
       openings:[
         {wall:'N', pos:30, len:180, type:'window', label:'Cửa sổ'},
@@ -146,7 +146,7 @@ const PLANS = [
         {wall:'S', pos:100, len:74, type:'door',   label:'Cửa WC'}
       ], fixtures:[]},
 
-    { id:'ngu2', name:'Phòng ngủ 2', type:'ngu', role:'ongba', x:690, y:540, w:240, d:380,
+    { id:'ngu2', name:'Phòng ngủ 2', type:'ngu', x:690, y:540, w:240, d:380,
       floor:'go', recipe:['giuong','tuquanao','tab','den'],
       openings:[
         {wall:'N', pos:100, len:74,  type:'door',   label:'Cửa WC'},
