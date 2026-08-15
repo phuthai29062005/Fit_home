@@ -1018,7 +1018,11 @@ function neededCats(r){
      cả ngân sách lẫn ghi chú đồ đạc ở trên, để "không cần gương" gõ nhầm
      không bao giờ lấy mất đồ phong thuỷ/trang điểm người dùng đã xin riêng
      cho phòng đó. */
-  if (decor.phongThuy){ add('cay'); add('tuong'); }
+  /* thêm cả tranh (treo tường, cỡ 50-120cm) chứ không chỉ cây/tượng để bàn —
+     cây/tượng phong thuỷ thật ngoài đời vốn nhỏ (chậu sen đá, tượng tỳ hưu
+     mini...), một mình rất dễ bị lọt thỏm trong ảnh 3D toàn cảnh; tranh treo
+     tường ngang tầm mắt (mount ~130-160cm) nổi bật hơn nhiều. */
+  if (decor.phongThuy){ add('cay'); add('tuong'); add('tranh'); }
   if (decor.trangDiem){ add('trangdiem'); }
   if (decor.toiGian){ rm('guong'); rm('tranh'); rm('tuong'); rm('cay'); rm('trangdiem'); }
 
@@ -1358,7 +1362,7 @@ function parseNeedNotes(text){
     const d = n.decorReq[rid], rr = roomById(rid);
     if (!rr) return;
     const bits = [];
-    if (d.phongThuy) bits.push('thêm cây + tượng phong thuỷ');
+    if (d.phongThuy) bits.push('thêm cây + tượng + tranh phong thuỷ');
     if (d.trangDiem) bits.push('thêm bàn trang điểm');
     if (d.toiGian)   bits.push('tối giản — bỏ hết đồ trang trí, không tăng theo ngân sách');
     if (bits.length) parsed.push(rr.name + ': ' + bits.join(', ') + '.');
@@ -2767,6 +2771,13 @@ $('#premiumConfirm').onclick = () => {
    ========================================================= */
 checkAuth();
 renderPremiumBox();
+/* mở link kèm ?reset=1 (vd khi quay demo, muốn mỗi lần vào đều sạch như
+   lần đầu) thì xoá mong muốn/cách bố trí đã lưu TRƯỚC KHI đọc lại, để
+   loadState() dưới đây không khôi phục lần trước — không cần vào lại
+   bấm nút "Xoá mong muốn đã lưu" mỗi lần. */
+if (new URLSearchParams(location.search).has('reset')){
+  try{ localStorage.removeItem(SAVE_KEY); }catch(e){}
+}
 const restoredSaved = loadState();
 buildSelects();
 buildNeeds();
