@@ -565,7 +565,7 @@ const FLOOR_FINISHES = [
 const CAT_KEYWORDS = {
   banlam:   ['bàn làm việc','bàn học','góc làm việc','chỗ làm việc','bàn máy tính'],
   ghe:      ['ghế công thái học','ghế xoay','ghế văn phòng','ghế ăn','ghế'],
-  ketivi:   ['kệ tivi','kệ ti vi','kệ tv','tivi treo','ti vi treo','tv treo'],
+  ketivi:   ['kệ tivi','kệ ti vi','kệ tv','tivi treo','ti vi treo','tv treo','tivi','ti vi'],
   sofa:     ['sofa','ghế sofa','ghế salon'],
   bantra:   ['bàn trà','bàn cà phê'],
   tham:     ['thảm'],
@@ -611,6 +611,11 @@ const SIZE_DOWN_HINTS = ['nhỏ hơn','bé hơn','gọn hơn','ngắn hơn','th�
    to quá → cần đổi sang món NHỎ hơn, nên xếp ở nhóm ngược lại SIZE_UP thông thường */
 const SIZE_TOOBIG_HINTS   = ['to quá','lớn quá','rộng quá','dài quá','cao quá','cồng kềnh'];
 const SIZE_TOOSMALL_HINTS = ['nhỏ quá','bé quá','chật quá','hẹp quá','ngắn quá','thấp quá'];
+
+/* "xịn hơn / cao cấp hơn" v.v. — ưu tiên GIÁ (không phải kích thước) trong
+   cùng 1 hạng mục, dùng chung cho mọi hạng mục giống hệt SIZE_UP/DOWN_HINTS. */
+const QUALITY_UP_HINTS   = ['xịn hơn','xịn xò hơn','cao cấp hơn','sang hơn','sang trọng hơn','đẹp hơn','tốt hơn','chất hơn','đắt tiền hơn','xịn'];
+const QUALITY_DOWN_HINTS = ['rẻ hơn','tiết kiệm hơn','bình dân hơn','giá mềm hơn','giá rẻ hơn'];
 
 const COLOR_FAMILIES = {
   trang:  {label:'trắng',    rgb:[240,240,236]},

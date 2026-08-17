@@ -15,14 +15,18 @@ const S = {
   sel:null, filter:'all',
   huong:'Nam', year:2000, budget:30000000, lightPreset:'day',
   need:{ people:2, notes:'', workspace:false, pc:false, bedroomTv:false, oneBedOnly:false,
-         sizePref:{}, colorPref:{}, must:[], autoMust:[], exclude:[], parsed:[],
+         sizePref:{}, colorPref:{}, qualityPref:{}, must:[], autoMust:[], exclude:[], parsed:[],
          /* occupants: {roomId: {role, year, label}} — đọc từ ghi chú tự do, vd
             "phòng ngủ nhỏ là của con, sinh năm 2015" — dùng để tính phong thuỷ
             (hướng giường...) RIÊNG cho từng phòng theo đúng người ở đó.
             decorReq: {roomId: {phongThuy, trangDiem, toiGian}} — CŨNG đọc từ
             ghi chú (vd "phòng ông bà cần đồ phong thuỷ"), quyết định đồ trang
-            trí có xuất hiện hay không; xem neededCats(). */
-         occupants:{}, decorReq:{} },
+            trí có xuất hiện hay không; xem neededCats().
+            roomGaps: {roomId: [{cat, need}]} — hạng mục ĐÃ ĐƯỢC YÊU CẦU qua
+            ghi chú (thêm món / to hơn / xịn hơn / màu...) nhưng ngân sách
+            phòng đó không đủ để đáp ứng đúng ý — tính lại mỗi lần bố trí,
+            xem pickSet() và catRequestedByNote(). */
+         occupants:{}, decorReq:{}, roomGaps:{} },
   arIdx:0
 };
 let UID = 1;
@@ -786,6 +790,14 @@ function catMedianSize(cat){
   const vals = CATALOG.filter(p => p.cat === cat).map(sizeMetric).sort((a,b) => a-b);
   return CAT_MEDIAN[cat] = vals[Math.floor(vals.length/2)] || 0;
 }
+/* giá trung vị (giá + ship) của 1 hạng mục — mốc so sánh "xịn/rẻ hơn mức
+   trung bình", dùng chung cho MỌI hạng mục giống hệt catMedianSize() ở trên. */
+const CAT_MEDIAN_COST = {};
+function catMedianCost(cat){
+  if (CAT_MEDIAN_COST[cat] != null) return CAT_MEDIAN_COST[cat];
+  const vals = CATALOG.filter(p => p.cat === cat).map(p => p.price + p.ship).sort((a,b) => a-b);
+  return CAT_MEDIAN_COST[cat] = vals[Math.floor(vals.length/2)] || 0;
+}
 function hexToRgb(hex){
   const n = parseInt(hex.replace('#',''), 16);
   return [(n>>16)&255, (n>>8)&255, n&255];
@@ -814,6 +826,12 @@ function needPenalty(p){
   }
   const cp = n.colorPref[p.cat] || n.colorPref._all;
   if (cp && colorFamily(p.color) !== cp) pen++;
+  const qp = n.qualityPref[p.cat];
+  if (qp){
+    const med = catMedianCost(p.cat), val = p.price + p.ship;
+    if (qp === 'high' && val <= med) pen++;
+    if (qp === 'low'  && val >= med) pen++;
+  }
   if (n.pc){
     if (p.cat==='banlam' && p.d < 55)  pen++;
     if (p.cat==='ghe'    && p.h < 110) pen++;
@@ -824,7 +842,7 @@ function needPenalty(p){
   return pen;
 }
 function pickSet(budget, cats){
-  const r = room(), chosen = [];
+  const r = room(), chosen = [], gaps = [];
   const pool = cats.map(c => ({
     cat:c,
     opts: CATALOG.filter(p => p.cat === c && fitsRoom(p, r))
@@ -832,11 +850,23 @@ function pickSet(budget, cats){
   })).filter(g => g.opts.length);
 
   const cost = p => p.price + p.ship;
-  // vòng 1: lấy rẻ nhất, bỏ bớt hạng mục nếu không đủ tiền
+  // vòng 1: lấy rẻ nhất THEO ĐÚNG YÊU CẦU (opts[0], đã ưu tiên to hơn/xịn
+  // hơn/màu... nếu có); nếu bản đó vượt ngân sách, thử lùi về bản RẺ NHẤT
+  // của cả hạng mục (bỏ yêu cầu) để phòng không bị trống hẳn 1 món, đồng
+  // thời ghi lại còn thiếu bao nhiêu tiền mới đáp ứng đúng yêu cầu đã gõ —
+  // dùng để báo "không đủ ngân sách" đúng chỗ người dùng vừa xin, xem
+  // catRequestedByNote() và autoLayout().
   let left = budget, taken = [];
   for (const g of pool){
-    const cheap = g.opts[0];
-    if (cost(cheap) <= left){ taken.push({g, p:cheap}); left -= cost(cheap); }
+    const pref = g.opts[0];
+    if (cost(pref) <= left){ taken.push({g, p:pref}); left -= cost(pref); continue; }
+    const cheapest = g.opts.reduce((m,p) => cost(p) < cost(m) ? p : m, pref);
+    if (cheapest !== pref && cost(cheapest) <= left){
+      taken.push({g, p:cheapest}); left -= cost(cheapest);
+      gaps.push({cat:g.cat, need: cost(pref) - cost(cheapest)});
+    } else {
+      gaps.push({cat:g.cat, need: cost(cheapest) - left});
+    }
   }
   // vòng 2: nâng cấp dần theo thứ tự ưu tiên — không nâng cấp vượt sang mức
   // penalty cao hơn (vd từ "món nhỏ theo yêu cầu" sang "món to không theo yêu cầu")
@@ -853,7 +883,7 @@ function pickSet(budget, cats){
     }
   }
   taken.forEach(t => chosen.push(t.p));
-  return chosen;
+  return {chosen, gaps};
 }
 
 /* ---- công cụ đặt đồ: tìm chỗ trống thật trên tường ---- */
@@ -1076,10 +1106,28 @@ function neededCats(r){
 
   return cats;
 }
+/* hạng mục cat ở phòng r có phải do NGƯỜI DÙNG chủ động xin qua ghi chú
+   không (thêm món / to hơn / xịn hơn / màu riêng...) — dùng để lọc "thiếu
+   tiền vì hạng mục nào" chỉ còn đúng cái người dùng vừa gõ, không lẫn với
+   hạng mục do công thức phòng mặc định kéo theo (không ai xin nhưng vẫn
+   thiếu tiền thì đã có cảnh báo "Chưa xếp được" ở runChecks() lo rồi). */
+function catRequestedByNote(cat, r){
+  const n = S.need;
+  if (n.autoMust.includes(cat)) return true;
+  if (n.sizePref[cat] || n.qualityPref[cat]) return true;
+  if (n.colorPref[cat] || n.colorPref._all) return true;
+  if ((n.workspace || n.pc) && r.id === deskRoomId() && (cat === 'banlam' || cat === 'ghe')) return true;
+  if (n.bedroomTv && r.id === 'master' && cat === 'ketivi') return true;
+  const decor = (n.decorReq && n.decorReq[r.id]) || {};
+  if (decor.phongThuy && ['cay','tuong','tranh'].includes(cat)) return true;
+  if (decor.trangDiem && cat === 'trangdiem') return true;
+  return false;
+}
 function autoLayout(budget, silent){
   const r = room();
   const cats = neededCats(r);
-  const picks = pickSet(budget != null ? budget : S.budget, cats);
+  const {chosen: picks, gaps} = pickSet(budget != null ? budget : S.budget, cats);
+  S.need.roomGaps[r.id] = gaps.filter(g => catRequestedByNote(g.cat, r));
   S.store[key(S.planId, r.id)] = [];
   S.sel = null;
   const get = c => picks.find(p => p.cat === c);
@@ -1275,9 +1323,12 @@ function parseNeedNotes(text){
   const n = S.need;
   n.notes = text;
   n.workspace = false; n.pc = false; n.bedroomTv = false; n.oneBedOnly = false;
-  n.sizePref = {}; n.colorPref = {}; n.exclude = []; n.autoMust = []; n.unmatched = [];
+  n.sizePref = {}; n.colorPref = {}; n.qualityPref = {}; n.exclude = []; n.autoMust = []; n.unmatched = [];
   n.occupants = {};
   n.decorReq = {};
+  /* xoá cảnh báo "thiếu tiền" của lần đọc ghi chú trước — chỉ tính lại đúng
+     sau khi bố trí xong với ghi chú MỚI này, xem autoLayout()/pickSet(). */
+  n.roomGaps = {};
 
   const hasAny = (s, list) => list.some(k => s.includes(k));
   const findColor = s => { for (const [word, fam] of COLOR_WORDS) if (s.includes(word)) return fam; return null; };
@@ -1379,19 +1430,31 @@ function parseNeedNotes(text){
     const isWork = hasAny(cl, WORK_KEYWORDS);
     if (isWork){ n.pc = true; n.workspace = true; hadEffect = true; }
     if (matchedCat === 'banlam'){ n.workspace = true; hadEffect = true; }
-    if (matchedCat === 'ketivi' && cl.includes('ngủ')){ n.bedroomTv = true; hadEffect = true; }
+    /* "tivi" nhắc tới PHÒNG NGỦ có cơ chế riêng (chỉ vào master, xem
+       bedroomTv) — còn nhắc tới tivi KHÔNG kèm "ngủ" (vd ở phòng khách,
+       nơi kệ tivi vốn đã có sẵn trong công thức) vẫn phải tính là CÓ hiệu
+       lực, kẻo báo nhầm "chưa hiểu" dù từ khoá đã khớp đúng. */
+    const ketiviBedroom = matchedCat === 'ketivi' && cl.includes('ngủ');
+    if (ketiviBedroom){ n.bedroomTv = true; hadEffect = true; }
 
     if (matchedCat){
       if (hasAny(cl, SIZE_TOOBIG_HINTS) || hasAny(cl, SIZE_DOWN_HINTS)){ n.sizePref[matchedCat] = 'small'; hadEffect = true; }
       else if (hasAny(cl, SIZE_TOOSMALL_HINTS) || hasAny(cl, SIZE_UP_HINTS)){ n.sizePref[matchedCat] = 'big'; hadEffect = true; }
+      /* "xịn hơn/cao cấp hơn" hay "rẻ hơn/tiết kiệm hơn" — ưu tiên theo GIÁ
+         trong hạng mục vừa khớp, dùng chung cho MỌI hạng mục giống hệt cách
+         size/color đã làm ở trên (không phải liệt kê riêng từng món). */
+      if (hasAny(cl, QUALITY_UP_HINTS)){ n.qualityPref[matchedCat] = 'high'; hadEffect = true; }
+      else if (hasAny(cl, QUALITY_DOWN_HINTS)){ n.qualityPref[matchedCat] = 'low'; hadEffect = true; }
       const fam = findColor(cl);
       if (fam){ n.colorPref[matchedCat] = fam; hadEffect = true; }
       /* nhắc tới 1 hạng mục chưa chắc đã nằm trong công thức phòng khách (vd
          "bàn ăn") — tự thêm vào autoMust (tính lại MỖI LẦN đọc ghi chú, khác
          với "must" do người dùng tự bấm chip — để đổi ghi chú là đổi hẳn,
          không bị dính yêu cầu cũ đã không còn nhắc tới nữa).
-         banlam/ghe/ketivi đã có cơ chế riêng (góc làm việc/PC/tivi) nên bỏ qua. */
-      if (!['banlam','ghe','ketivi'].includes(matchedCat)){
+         banlam/ghe đã có cơ chế riêng (góc làm việc/PC); ketivi-phòng-ngủ
+         cũng vậy (bedroomTv ở trên) nên chỉ loại đúng trường hợp đó, còn
+         "tivi" nhắc ở nơi khác (vd phòng khách) vẫn tự thêm bình thường. */
+      if (!['banlam','ghe'].includes(matchedCat) && !ketiviBedroom){
         if (!n.autoMust.includes(matchedCat)) n.autoMust.push(matchedCat);
         hadEffect = true;
       }
@@ -1431,14 +1494,17 @@ function parseNeedNotes(text){
   n.exclude.forEach(cat => parsed.push('Bỏ ' + catLabel(cat) + ' — không xếp món này ở phòng khách.'));
   Object.keys(n.sizePref).forEach(cat =>
     parsed.push(catLabel(cat) + ': ưu tiên cỡ ' + (n.sizePref[cat]==='big' ? 'lớn hơn' : 'nhỏ hơn') + ' mức trung bình.'));
+  Object.keys(n.qualityPref).forEach(cat =>
+    parsed.push(catLabel(cat) + ': ưu tiên loại ' + (n.qualityPref[cat]==='high' ? 'xịn/cao cấp hơn' : 'tiết kiệm hơn') + ' mức trung bình (trong ngân sách cho phép).'));
   Object.keys(n.colorPref).forEach(cat => {
     const label = cat === '_all' ? 'Toàn bộ đồ nội thất' : catLabel(cat);
     parsed.push(label + ': ưu tiên tông màu ' + COLOR_FAMILIES[n.colorPref[cat]].label + '.');
   });
-  /* hạng mục chỉ được NHẮC TÊN suông (không kèm cỡ/màu) — 2 dòng trên đã tự
-     nói lên chuyện "sẽ thêm" rồi nên bỏ qua, tránh lặp lại 2 lần cùng 1 ý. */
+  /* hạng mục chỉ được NHẮC TÊN suông (không kèm cỡ/màu/loại) — 3 dòng trên đã
+     tự nói lên chuyện "sẽ thêm" rồi nên bỏ qua, tránh lặp lại 2 lần cùng 1 ý. */
   n.autoMust.forEach(cat => {
-    if (n.sizePref[cat] == null && n.colorPref[cat] == null) parsed.push('Thêm ' + catLabel(cat) + ' vào phòng khách.');
+    if (n.sizePref[cat] == null && n.colorPref[cat] == null && n.qualityPref[cat] == null)
+      parsed.push('Thêm ' + catLabel(cat) + ' vào phòng khách.');
   });
   n.parsed = parsed;
   return n.parsed;
@@ -1453,7 +1519,23 @@ function buildNeeds(){
     ? (understood ? '<br>' : '') + '<b class="warn">Chưa hiểu:</b><br>' + S.need.unmatched.map(t => '· “' + t + '”').join('<br>')
       + '<span class="hint">Máy chỉ dò từ khoá, không hiểu câu tự nhiên hoàn toàn — thử đổi cách nói (vd “giường”, “sofa”, “bàn ăn”, “to hơn/nhỏ hơn”, “màu trắng”, “góc làm việc”, “PC”, “cây phong thuỷ”), hoặc thêm thẳng món đó từ danh mục bên dưới.</span>'
     : '';
-  $('#needParsed').innerHTML = understood + unmatched
+  /* yêu cầu đã gõ (thêm món / to hơn / xịn hơn / màu...) nhưng ngân sách
+     phòng đó không đủ để đáp ứng đúng ý — tính lại mỗi lần bố trí, xem
+     autoLayout()/pickSet(). Chỉ có nội dung SAU KHI đã bấm bố trí ít nhất
+     1 lần, vì phải chạy xong pickSet() mới biết thiếu bao nhiêu. */
+  const gapLines = [];
+  Object.keys(S.need.roomGaps||{}).forEach(rid => {
+    const rr = roomById(rid);
+    (S.need.roomGaps[rid]||[]).forEach(g => {
+      gapLines.push((rr ? rr.name : rid) + ': ' + catLabel(g.cat) + ' theo đúng yêu cầu — thiếu khoảng '
+        + vnd(Math.max(0, g.need)) + ' nữa mới đủ ngân sách.');
+    });
+  });
+  const budgetWarn = gapLines.length
+    ? (understood || unmatched ? '<br>' : '') + '<b class="warn">Không đủ ngân sách:</b><br>' + gapLines.map(t => '· ' + t).join('<br>')
+      + '<span class="hint">Vẫn xếp tạm bản rẻ nhất của hạng mục này (nếu vừa phòng) để không bỏ trống — tăng ngân sách ở mục 1 rồi bấm lại để lấy đúng bản đã xin.</span>'
+    : '';
+  $('#needParsed').innerHTML = understood + unmatched + budgetWarn
     || '<span class="empty">Gõ ghi chú rồi bấm “Áp dụng &amp; bố trí lại cả căn hộ” để xem máy hiểu gì.</span>';
   $('#mustChecks').innerHTML = CATS.map(c =>
     `<button class="chip" data-c="${c.id}" aria-pressed="${S.need.must.includes(c.id)}">${c.label}</button>`).join('');
@@ -1676,17 +1758,21 @@ $('#selWall').onchange = e => { S.wallFinish = e.target.value; if (typeof TD!=='
 $('#selFloor').onchange = e => { S.floorFinish = e.target.value; if (typeof TD!=='undefined' && TD.active) td_build(); saveState(); };
 $('#inpYear').onchange = e => { S.year = +e.target.value || 2000; renderChecks(); saveState(); };
 $('#inpBudget').onchange = e => { S.budget = +e.target.value || 0; renderReceipt(); saveState(); };
-$('#btnAutoAll').onclick = () => { S.budget = +$('#inpBudget').value||0; autoLayoutAll(); };
+$('#btnAutoAll').onclick = () => { S.budget = +$('#inpBudget').value||0; autoLayoutAll(); buildNeeds(); };
 $('#btnApplyNotes').onclick = () => {
   parseNeedNotes($('#needNotes').value);
-  buildNeeds();
   S.budget = +$('#inpBudget').value || S.budget;
   autoLayoutAll();
+  /* buildNeeds() gọi LẦN 2 sau khi bố trí xong (không phải trước) — vì cảnh
+     báo "Không đủ ngân sách" (S.need.roomGaps) chỉ tính được sau khi
+     autoLayoutAll()/pickSet() đã chạy xong, xem buildNeeds(). */
+  buildNeeds();
 };
 $('#btnAuto').onclick = () => {
   S.budget = +$('#inpBudget').value||0;
   const tot = liveRooms().reduce((a,r)=>a+(WEIGHT[r.type]||.5),0);
   autoLayout(S.budget * (WEIGHT[room().type]||.5) / tot);
+  buildNeeds();
 };
 $('#btnClear').onclick = () => {
   liveRooms().forEach(r => S.store[key(S.planId,r.id)] = []);
